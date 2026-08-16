@@ -1,0 +1,15 @@
+# Template only: this repository does not currently have Mergify installed.
+queue_rules:
+  - name: conflict-radar-verified
+    queue_conditions:
+      - check-success=semantic-desync
+    merge_conditions:
+      - check-success=semantic-desync
+
+pull_request_rules:
+  - name: enqueue verified pull requests
+    conditions:
+      - check-success=semantic-desync
+    actions:
+      queue:
+        name: conflict-radar-verified

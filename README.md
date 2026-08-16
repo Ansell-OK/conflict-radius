@@ -36,6 +36,26 @@ npm run conflict-radar-ci
 
 The verification harness checks both a real indirect collision and a genuinely isolated claim. The CI command exits nonzero when a reachable conflict is found.
 
+## Reachability verification
+
+Reachability narrows the candidate set, then Conflict Radar reparses the relevant file and compares its live signature with the snapshot captured by `claim_task`. Findings are reported as:
+
+- `reachable-unverified`: reachable, but no signature change was verified; advisory only.
+- `verified-compatible`: a changed signature was classified as compatible; advisory only.
+- `verified-breaking`: a changed signature was classified as breaking; this is the only tier that blocks CI.
+
+Common changes are handled by deterministic parameter and return-type heuristics. Ambiguous changes can use an optional OpenAI Responses API fallback when `OPENAI_API_KEY` and `CONFLICT_RADAR_LLM_MODEL` are configured.
+
+Run the deliberate three-tier verification fixture with:
+
+```bash
+npm run verify:verification
+```
+
+## Merge queues
+
+The existing `semantic-desync` CI check can be registered as a required Graphite or Mergify merge-queue check. Neither provider is installed on this repository, so the checked-in files are configuration examples only. See [merge queue integration](./docs/merge-queue-integration.md).
+
 ## HydraDB compatibility note
 
 Conflict Radar currently depends on HydraDB's Bolt endpoint. During real extraction and CI stress tests, HydraDB intermittently surfaced a `RangeError [ERR_OUT_OF_RANGE]` from the Neo4j JavaScript driver while decoding otherwise valid query results. Retrying the same request often succeeds, but the transport failure can still interrupt graph extraction or CI cleanup. See [HydraDB issue #98](https://github.com/hydra-db/hydradb/issues/98) for the reproduction and status.

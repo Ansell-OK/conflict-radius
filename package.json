@@ -9,6 +9,7 @@
     "start": "node dist/src/index.js",
     "verify:conflicts": "node dist/scripts/verifyConflicts.js",
     "verify:mcp": "node dist/scripts/verifyMcp.js",
+    "verify:verification": "node dist/scripts/verifyVerification.js",
     "conflict-radar-ci": "node dist/src/ci.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

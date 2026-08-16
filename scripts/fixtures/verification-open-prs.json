@@ -1,0 +1,7 @@
+[
+  {
+    "id": "verification-ci-caller",
+    "taskDescription": "Prepare the clinical view",
+    "symbols": ["crPrepareClinicalView"]
+  }
+]

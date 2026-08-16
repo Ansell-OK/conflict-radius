@@ -51,7 +51,8 @@ export class HydraClient {
     parameters: Record<string, unknown> = {},
     consistency: ConsistencyMode = "causal",
   ): Promise<Array<Record<string, unknown>>> {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    const maxAttempts = 5;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const session = this.driver.session({ database: this.config.database });
       try {
         const result = await session.run(query, toBolt(parameters), {
@@ -60,13 +61,15 @@ export class HydraClient {
         });
         return rows(result);
       } catch (error) {
-        if (attempt === 0 && error instanceof RangeError && (error as NodeJS.ErrnoException).code === "ERR_OUT_OF_RANGE") continue;
+        const offsetFailure = error instanceof RangeError
+          && ((error as NodeJS.ErrnoException).code === "ERR_OUT_OF_RANGE" || error.message.includes('"offset" is out of range'));
+        if (offsetFailure && attempt < maxAttempts - 1) continue;
         throw error;
       } finally {
         await session.close();
       }
     }
-    throw new Error("HydraDB query retry exhausted");
+    throw new Error(`HydraDB query retry exhausted after ${maxAttempts} attempts`);
   }
 
   async close(): Promise<void> {

@@ -4,6 +4,7 @@ import Parser from "tree-sitter";
 import JavaScript from "tree-sitter-javascript";
 import { HydraClient, hydraConfigFromEnv } from "../src/hydra/client.js";
 import { stableId } from "../src/ids.js";
+import { serializeSignature, signatureFromSource } from "../src/signatures.js";
 
 interface SymbolRow {
   id: number;
@@ -13,6 +14,7 @@ interface SymbolRow {
   language: "javascript";
   startIndex: number;
   endIndex: number;
+  signatureSnapshot: string;
 }
 
 interface CallRow {
@@ -49,6 +51,7 @@ async function parseFile(parser: Parser, query: Parser.Query, repoRoot: string, 
         language: "javascript",
         startIndex: definition.node.startIndex,
         endIndex: definition.node.endIndex,
+        signatureSnapshot: serializeSignature(signatureFromSource(source, definitionName.node.text)),
       });
     }
 
@@ -102,8 +105,8 @@ async function main(): Promise<void> {
   for (const symbol of symbols) {
     const fileId = stableId("File", symbol.filePath);
     await client.query(
-      "UNWIND $rows AS row MERGE (s {id: row.id}) SET s:Symbol, s.name = row.name, s.kind = row.kind, s.file_path = row.filePath, s.language = row.language",
-      { rows: [{ id: symbol.id, name: symbol.name, kind: symbol.kind, filePath: symbol.filePath, language: symbol.language }] },
+      "UNWIND $rows AS row MERGE (s {id: row.id}) SET s:Symbol, s.name = row.name, s.kind = row.kind, s.file_path = row.filePath, s.language = row.language, s.signature_snapshot = row.signatureSnapshot",
+      { rows: [{ id: symbol.id, name: symbol.name, kind: symbol.kind, filePath: symbol.filePath, language: symbol.language, signatureSnapshot: symbol.signatureSnapshot }] },
     );
     await client.query(
       "UNWIND $rows AS row MATCH (s:Symbol {id: row.source}), (f:File {id: row.target}) MERGE (s)-[edge:DEFINED_IN {id: row.edgeId}]->(f)",

@@ -75,22 +75,24 @@ if (currentSymbols.length === 0) {
   const radar = new ConflictRadar(client);
   const currentId = `ci-current-${process.env.GITHUB_SHA ?? Date.now()}`;
   await radar.releaseTask(currentId);
-  await radar.claimTask({ agentId: currentId, taskDescription: "CI changed symbols", symbols: currentSymbols });
+  await radar.claimTask({ agentId: currentId, taskDescription: "CI changed symbols", symbols: currentSymbols, captureSnapshot: false });
 
   const claimed: string[] = [];
   try {
     for (const pr of prs) {
       await radar.releaseTask(pr.id);
-      await radar.claimTask({ agentId: pr.id, taskDescription: pr.taskDescription, symbols: pr.symbols });
+      await radar.claimTask({ agentId: pr.id, taskDescription: pr.taskDescription, symbols: pr.symbols, captureSnapshot: false });
       claimed.push(pr.id);
     }
     const result = await radar.checkConflicts(currentId, "strong");
-    if (result.conflicts.length > 0) {
+    const blocking = result.conflicts.filter((conflict) => conflict.severity === "verified-breaking");
+    if (blocking.length > 0) {
       console.error("conflict-radar-ci: desynchronization detected");
       console.error(JSON.stringify(result, null, 2));
       process.exitCode = 1;
     } else {
-      console.log("conflict-radar-ci: clear");
+      console.log(`conflict-radar-ci: clear (${result.conflicts.length} advisory finding(s))`);
+      if (result.conflicts.length > 0) console.log(JSON.stringify(result, null, 2));
     }
   } finally {
     await radar.releaseTask(currentId);
