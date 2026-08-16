@@ -1,6 +1,7 @@
 import { getUser } from "../db.js";
 
 export function createOrder(userId, items) {
+  // Queue probe: this comment-only change must remain signature-compatible.
   const user = getUser(userId);
   return { user, items, status: "pending" };
 }
