@@ -38,8 +38,8 @@ The verification harness checks both a real indirect collision and a genuinely i
 
 ## Public pages
 
-- [Landing page](./public/index.html)
-- [Documentation](./public/docs.html)
+- [Landing page](https://conflict-radius.vercel.app/)
+- [Documentation](https://conflict-radius.vercel.app/docs.html)
 - [GitHub repository](https://github.com/Ansell-OK/conflict-radius)
 
 ## Scope
