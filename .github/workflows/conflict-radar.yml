@@ -1,0 +1,40 @@
+name: conflict-radar
+
+on:
+  pull_request:
+
+jobs:
+  semantic-desync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      - name: Start HydraDB
+        run: |
+          mkdir -p "$RUNNER_TEMP/hydradb/store" "$RUNNER_TEMP/hydradb/cache"
+          printf '%s' 'local-development-token-32-bytes' > "$RUNNER_TEMP/hydradb/auth-token"
+          docker run -d --name conflict-radar-hydradb \
+            --user "$(id -u):$(id -g)" \
+            -p 17687:7687 -p 18443:8443 -p 19091:9090 \
+            -v "$RUNNER_TEMP/hydradb:/data" \
+            -e CLOUD_PROVIDER=local -e LOCAL_PATH=/data/store \
+            -e GRAPH_NAMESPACE=local -e GRAPH_ID=default \
+            -e GRAPH_CELL_ID=cell-0 -e GRAPH_CELLS=cell-0 -e GRAPH_NODE_ID=node-0 \
+            -e GRAPH_BOLT_NODE_ADDRESSES=node-0=127.0.0.1:17687 \
+            -e GRAPH_ADVERTISED_BOLT_ADDR=127.0.0.1:17687 \
+            -e GRAPH_DATA_CACHE_DIR=/data/cache -e GRAPH_AUTH_TOKEN_FILE=/data/auth-token \
+            -e GRAPH_ALLOW_PLAINTEXT=true -e RUST_MIN_STACK=33554432 \
+            ghcr.io/hydra-db/hydradb:latest
+          until curl -fsS http://127.0.0.1:19091/readyz; do sleep 1; done
+      - run: node dist/extractor/extractSymbols.js .
+      - run: npm run conflict-radar-ci
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_EVENT_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,7 @@
+[
+  {
+    "id": "ci-other-pr",
+    "taskDescription": "Add order creation",
+    "symbols": ["createOrder"]
+  }
+]

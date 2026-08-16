@@ -1,0 +1,100 @@
+import { execFileSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { ConflictRadar } from "./conflictRadar.js";
+import { HydraClient, hydraConfigFromEnv } from "./hydra/client.js";
+
+interface OpenPr {
+  id: string;
+  taskDescription: string;
+  symbols: string[];
+}
+
+interface GitHubPullRequest {
+  number: number;
+  title: string;
+}
+
+interface GitHubFile {
+  filename: string;
+}
+
+function changedFiles(base: string): string[] {
+  const output = execFileSync("git", ["diff", "--name-only", `${base}...HEAD`], { encoding: "utf8" });
+  return output.split(/\r?\n/).map((file) => file.trim().replaceAll("\\", "/")).filter(Boolean);
+}
+
+async function symbolsForFiles(client: HydraClient, files: string[]): Promise<string[]> {
+  const symbols: string[] = [];
+  for (const file of files) {
+    const rows = await client.query("MATCH (s:Symbol {file_path: $file}) RETURN s.name AS name", { file });
+    symbols.push(...rows.flatMap((row) => (typeof row.name === "string" ? [row.name] : [])));
+  }
+  return [...new Set(symbols)];
+}
+
+async function githubJson<T>(path: string): Promise<T> {
+  const repository = process.env.GITHUB_REPOSITORY;
+  const token = process.env.GITHUB_TOKEN;
+  if (!repository || !token) throw new Error("GITHUB_REPOSITORY and GITHUB_TOKEN are required to discover open PRs");
+  const response = await fetch(`https://api.github.com/repos/${repository}${path}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "conflict-radar-ci" },
+  });
+  if (!response.ok) throw new Error(`GitHub API failed (${response.status}): ${await response.text()}`);
+  return response.json() as Promise<T>;
+}
+
+async function discoverOpenPrs(client: HydraClient): Promise<OpenPr[]> {
+  if (!process.env.GITHUB_REPOSITORY || !process.env.GITHUB_TOKEN) return [];
+  const current = Number(process.env.GITHUB_EVENT_NUMBER ?? 0);
+  const pulls = await githubJson<GitHubPullRequest[]>("/pulls?state=open&per_page=100");
+  const result: OpenPr[] = [];
+  for (const pull of pulls.filter((item) => item.number !== current)) {
+    const files = await githubJson<GitHubFile[]>(`/pulls/${pull.number}/files?per_page=100`);
+    result.push({
+      id: `pr-${pull.number}`,
+      taskDescription: `PR #${pull.number}: ${pull.title}`,
+      symbols: await symbolsForFiles(client, files.map((file) => file.filename)),
+    });
+  }
+  return result;
+}
+
+const base = process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : process.env.CONFLICT_RADAR_BASE ?? "main";
+const explicitSymbols = process.env.CONFLICT_RADAR_CHANGED_SYMBOLS?.split(",").map((symbol) => symbol.trim()).filter(Boolean);
+const client = new HydraClient(hydraConfigFromEnv());
+const currentSymbols = explicitSymbols?.length ? explicitSymbols : await symbolsForFiles(client, changedFiles(base));
+const prs: OpenPr[] = process.env.CONFLICT_RADAR_OPEN_PRS
+  ? JSON.parse(await readFile(process.env.CONFLICT_RADAR_OPEN_PRS, "utf8")) as OpenPr[]
+  : await discoverOpenPrs(client);
+
+if (currentSymbols.length === 0) {
+  console.error("conflict-radar-ci: no changed symbols resolved; refusing to pass silently");
+  process.exitCode = 2;
+  await client.close();
+} else {
+  const radar = new ConflictRadar(client);
+  const currentId = `ci-current-${process.env.GITHUB_SHA ?? Date.now()}`;
+  await radar.releaseTask(currentId);
+  await radar.claimTask({ agentId: currentId, taskDescription: "CI changed symbols", symbols: currentSymbols });
+
+  const claimed: string[] = [];
+  try {
+    for (const pr of prs) {
+      await radar.releaseTask(pr.id);
+      await radar.claimTask({ agentId: pr.id, taskDescription: pr.taskDescription, symbols: pr.symbols });
+      claimed.push(pr.id);
+    }
+    const result = await radar.checkConflicts(currentId, "strong");
+    if (result.conflicts.length > 0) {
+      console.error("conflict-radar-ci: desynchronization detected");
+      console.error(JSON.stringify(result, null, 2));
+      process.exitCode = 1;
+    } else {
+      console.log("conflict-radar-ci: clear");
+    }
+  } finally {
+    await radar.releaseTask(currentId);
+    for (const id of claimed) await radar.releaseTask(id);
+    await client.close();
+  }
+}
