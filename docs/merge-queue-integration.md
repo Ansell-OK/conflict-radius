@@ -4,7 +4,7 @@ Conflict Radar keeps `conflict-radar-ci` as the enforcement command and register
 
 ## Availability
 
-Neither Graphite nor Mergify is installed on the current repository, and `main` has no protected required checks. The configurations below are templates only and have not been validated against a live provider account.
+Neither Graphite nor Mergify is installed on the current repository, and `main` has no protected required checks. The Mergify template has been validated against the official configuration schema with `mergify 2026.8.11.1`; queue execution has not been validated against a live provider account.
 
 ## Graphite
 
@@ -13,6 +13,12 @@ In the Graphite dashboard for the repository, add the GitHub check named `semant
 ## Mergify
 
 Copy `.mergify.example.yml` to `.mergify.yml` only after installing Mergify. The example creates a queue whose entry and merge conditions both require `semantic-desync`.
+
+Validate future changes locally with:
+
+```bash
+mergify config validate --config-file .mergify.example.yml
+```
 
 Confirm the exact check name in GitHub after the workflow runs once. GitHub may display it with workflow context depending on repository settings.
 

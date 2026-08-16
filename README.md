@@ -54,7 +54,7 @@ npm run verify:verification
 
 ## Merge queues
 
-The existing `semantic-desync` CI check can be registered as a required Graphite or Mergify merge-queue check. Neither provider is installed on this repository, so the checked-in files are configuration examples only. See [merge queue integration](./docs/merge-queue-integration.md).
+The existing `semantic-desync` CI check can be registered as a required Graphite or Mergify merge-queue check. The Mergify template passes the official CLI schema validator, but neither provider's GitHub App is installed on this repository, so live queue behavior remains untested. See [merge queue integration](./docs/merge-queue-integration.md).
 
 ## HydraDB compatibility note
 
