@@ -4,7 +4,7 @@ Conflict Radar keeps `conflict-radar-ci` as the enforcement command and register
 
 ## Availability
 
-Neither Graphite nor Mergify is installed on the current repository, and `main` has no protected required checks. The Mergify template has been validated against the official configuration schema with `mergify 2026.8.11.1`; queue execution has not been validated against a live provider account.
+Mergify's GitHub App and Merge Queue product are active on `Ansell-OK/conflict-radius`. The configuration was validated with `mergify 2026.8.11.1`, then exercised through two real pull requests. Both entered `conflict-radar-verified` only after `semantic-desync` passed and were merged by the queue. Graphite remains untested.
 
 ## Graphite
 
@@ -12,7 +12,7 @@ In the Graphite dashboard for the repository, add the GitHub check named `semant
 
 ## Mergify
 
-Copy `.mergify.example.yml` to `.mergify.yml` only after installing Mergify. The example creates a queue whose entry and merge conditions both require `semantic-desync`.
+The live `.mergify.yml` creates a queue whose entry and merge conditions both require `semantic-desync`. `.mergify.example.yml` is retained as a reusable template.
 
 Validate future changes locally with:
 
@@ -21,6 +21,14 @@ mergify config validate --config-file .mergify.example.yml
 ```
 
 Confirm the exact check name in GitHub after the workflow runs once. GitHub may display it with workflow context depending on repository settings.
+
+Queue admission was verified with the provider-supported command:
+
+```text
+@Mergifyio queue
+```
+
+The configured `pull_request_rules` action matched in CLI simulation but did not automatically enqueue the live test PR. Treat command/dashboard admission as the tested path until automatic rules execution is separately enabled and observed for the account.
 
 ## Queue comparison set
 
