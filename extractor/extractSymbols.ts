@@ -24,9 +24,10 @@ interface CallRow {
 
 async function walkJavaScriptFiles(root: string): Promise<string[]> {
   const found: string[] = [];
+  const ignoredDirectories = new Set([".git", ".hydradb-local", ".worktrees", "dist", "node_modules"]);
   for (const entry of await readdir(root, { withFileTypes: true })) {
     const absolute = path.join(root, entry.name);
-    if (entry.isDirectory()) found.push(...(await walkJavaScriptFiles(absolute)));
+    if (entry.isDirectory() && !ignoredDirectories.has(entry.name)) found.push(...(await walkJavaScriptFiles(absolute)));
     else if (entry.isFile() && [".js", ".mjs", ".cjs"].includes(path.extname(entry.name))) found.push(absolute);
   }
   return found;
