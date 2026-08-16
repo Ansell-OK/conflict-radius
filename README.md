@@ -36,6 +36,10 @@ npm run conflict-radar-ci
 
 The verification harness checks both a real indirect collision and a genuinely isolated claim. The CI command exits nonzero when a reachable conflict is found.
 
+## HydraDB compatibility note
+
+Conflict Radar currently depends on HydraDB's Bolt endpoint. During real extraction and CI stress tests, HydraDB intermittently surfaced a `RangeError [ERR_OUT_OF_RANGE]` from the Neo4j JavaScript driver while decoding otherwise valid query results. Retrying the same request often succeeds, but the transport failure can still interrupt graph extraction or CI cleanup. See [HydraDB issue #98](https://github.com/hydra-db/hydradb/issues/98) for the reproduction and status.
+
 ## Public pages
 
 - [Landing page](https://conflict-radius.vercel.app/)
