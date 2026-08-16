@@ -1,0 +1,51 @@
+# Conflict Radar
+
+Conflict Radar detects semantic desynchronization between coding agents working in parallel. It catches graph-reachable collisions even when agents touch different files and Git reports a clean merge.
+
+## What it does
+
+1. An agent claims the symbols or files it expects to touch.
+2. Conflict Radar checks active claims against the repository call graph in HydraDB.
+3. The same query runs in strong mode at CI and blocks a desynchronized merge.
+
+Example path:
+
+```text
+getUser -> createOrder -> submitOrder
+```
+
+## Quick start
+
+```bash
+npm install
+npm run build
+node dist/extractor/extractSymbols.js ./demo-repo
+node dist/src/index.js
+```
+
+Run the extractor once before agent sessions. Point every agent at the same stdio MCP server and use `claim_task` before editing, `check_conflicts` during work, and `release_task` when finished.
+
+## Verification
+
+```bash
+npm run typecheck
+npm run verify:conflicts
+npm run verify:mcp
+npm run conflict-radar-ci
+```
+
+The verification harness checks both a real indirect collision and a genuinely isolated claim. The CI command exits nonzero when a reachable conflict is found.
+
+## Public pages
+
+- [Landing page](./public/index.html)
+- [Documentation](./public/docs.html)
+- [GitHub repository](https://github.com/Ansell-OK/conflict-radius)
+
+## Scope
+
+The v1 extractor uses a tree-sitter driver with language-specific query files. It does not resolve cross-language calls, reparse a changing graph live, or automatically resolve whose change wins.
+
+## License
+
+Private project repository. Licensing has not yet been selected.
