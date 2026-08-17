@@ -1,6 +1,9 @@
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+execFileSync(process.execPath, ["dist/extractor/extractSymbols.js", path.resolve("demo-repo"), "--repository-key", "github.com/ansell-ok/conflict-radius"], { stdio: "inherit" });
 const transport = new StdioClientTransport({ command: process.execPath, args: ["dist/src/index.js"] });
 const client = new Client({ name: "conflict-radar-checkpoint", version: "0.1.0" });
 await client.connect(transport);

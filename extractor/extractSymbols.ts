@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Parser from "tree-sitter";
 import JavaScript from "tree-sitter-javascript";
 import TypeScript from "tree-sitter-typescript";
@@ -30,16 +31,18 @@ interface LanguageConfig {
   queryPath: string;
 }
 
+const queriesRoot = fileURLToPath(new URL("./queries/", import.meta.url));
+
 function languageConfig(file: string): LanguageConfig | null {
   const extension = path.extname(file);
   if ([".js", ".mjs", ".cjs"].includes(extension)) {
-    return { language: JavaScript as never, name: "javascript", queryPath: "extractor/queries/javascript.scm" };
+    return { language: JavaScript as never, name: "javascript", queryPath: path.join(queriesRoot, "javascript.scm") };
   }
   if (extension === ".ts") {
-    return { language: TypeScript.typescript as never, name: "typescript", queryPath: "extractor/queries/typescript.scm" };
+    return { language: TypeScript.typescript as never, name: "typescript", queryPath: path.join(queriesRoot, "typescript.scm") };
   }
   if (extension === ".tsx") {
-    return { language: TypeScript.tsx as never, name: "typescript", queryPath: "extractor/queries/typescript.scm" };
+    return { language: TypeScript.tsx as never, name: "typescript", queryPath: path.join(queriesRoot, "typescript.scm") };
   }
   return null;
 }

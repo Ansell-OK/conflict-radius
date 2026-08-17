@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { createServer } from "node:http";
 import { AdmissionCoordinator, ChangeSetInput } from "./admission.js";
 import { HydraClient, hydraConfigFromEnv } from "./hydra/client.js";

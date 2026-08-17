@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .hydradb-local/
+.conflict-radar/
+.package-test/
 .worktrees/
 conflict-radar-docs/
 stress-repos/

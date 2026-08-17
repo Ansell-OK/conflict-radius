@@ -1,10 +1,27 @@
 {
   "name": "conflict-radar-mcp",
   "version": "0.1.0",
-  "private": true,
+  "description": "Graph-aware semantic conflict detection for parallel coding agents",
   "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ansell-OK/conflict-radius.git"
+  },
+  "homepage": "https://conflict-radius.vercel.app/",
+  "bin": {
+    "conflict-radar": "dist/src/cli.js",
+    "conflict-radar-mcp": "dist/src/index.js",
+    "conflict-radar-ci": "dist/src/ci.js",
+    "conflict-radar-admission": "dist/src/admissionServer.js"
+  },
+  "files": [
+    "dist/src",
+    "dist/extractor",
+    "README.md"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copyAssets.mjs",
     "extract": "tsx extractor/extractSymbols.ts",
     "extract:contracts": "tsx extractor/ingestContracts.ts",
     "start": "node dist/src/index.js",
@@ -19,7 +36,10 @@
     "verify:verification": "node dist/scripts/verifyVerification.js",
     "stress:cross-repo": "node dist/scripts/stressCrossRepo.js",
     "conflict-radar-ci": "node dist/src/ci.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify:package": "npm run typecheck && npm run build",
+    "prepack": "npm run verify:package",
+    "prepublishOnly": "npm run verify:package"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

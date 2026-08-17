@@ -2,6 +2,8 @@
 
 Conflict Radar detects semantic desynchronization between coding agents working in parallel. It catches graph-reachable collisions even when agents touch different files and Git reports a clean merge.
 
+[Install `conflict-radar-mcp` from npm](https://www.npmjs.com/package/conflict-radar-mcp).
+
 ## What it does
 
 1. An agent claims the symbols or files it expects to touch.
@@ -17,20 +19,42 @@ getUser -> createOrder -> submitOrder
 ## Quick start
 
 ```bash
-npm install
-npm run build
-node dist/extractor/extractSymbols.js ./demo-repo
-node dist/src/index.js
+npm install --save-dev conflict-radar-mcp
+npx conflict-radar init
+npx conflict-radar up
+npx conflict-radar extract .
 ```
 
-Run the extractor once before agent sessions. Point every agent at the same stdio MCP server and use `claim_task` before editing, `check_conflicts` during work, and `release_task` when finished.
+`init` creates an ignored `.conflict-radar/` directory containing:
+
+- `compose.yml` for the official HydraDB container.
+- `hydradb-data/` for the local store, cache, and authentication token.
+- `mcp.json`, a portable MCP server configuration snippet.
+
+`up` starts HydraDB and does not report success until a real write/read round-trip passes. It requires Docker with Compose v2. Run `npx conflict-radar doctor` at any time to repeat that check.
+
+Point every agent at the same stdio MCP server using the generated configuration. Agents should use `claim_task` before editing, `check_conflicts` during work, and `release_task` when finished.
+
+The installed package exposes these commands:
+
+```text
+conflict-radar             setup, Docker lifecycle, doctor, and extraction CLI
+conflict-radar-mcp         stdio MCP server
+conflict-radar-ci          strong CI gate
+conflict-radar-admission   single-writer cross-repository admission service
+```
+
+Stop the local database with:
+
+```bash
+npx conflict-radar down
+```
 
 For cross-repository OpenAPI contracts, add `.conflict-radar.yml` to each provider/consumer repository, extract each repository with its stable repository key, then ingest its bindings:
 
 ```bash
-node dist/extractor/extractSymbols.js . --repository-key github.com/acme/patient-api
-node dist/extractor/ingestContracts.js .
-npm run start:admission
+npx conflict-radar extract .
+npx conflict-radar-admission
 ```
 
 The admission coordinator owns only cross-repository change-set ordering. Mergify or Graphite still owns the merge. Configure CI with `CONFLICT_RADAR_ADMISSION_URL` and a `CONFLICT_RADAR_CHANGE_SET` JSON payload to enable the cross-repository gate.
@@ -48,6 +72,19 @@ npm run verify:conflicts
 npm run verify:mcp
 npm run conflict-radar-ci
 ```
+
+## Building from source
+
+```bash
+git clone https://github.com/Ansell-OK/conflict-radius.git
+cd conflict-radius
+npm install
+npm run build
+node dist/src/cli.js init
+node dist/src/cli.js up
+```
+
+The source workflow uses the same generated Compose configuration and doctor probe as the installed package.
 
 The verification harness checks both a real indirect collision and a genuinely isolated claim. The CI command exits nonzero when a reachable conflict is found.
 
@@ -91,6 +128,8 @@ The client retries known transient decoder failures, but retries are mitigation 
 
 The implementation has been checked against parallel Git worktrees and separate provider/consumer repositories, not only the bundled demo. The latest stress environment detected a breaking path across different source files (`plan -> admit -> evaluate`), detected an OpenAPI break across repositories (`admit -> operation:admitJob -> submitJob`), and admitted exactly one side in all 10 concurrent admission rounds.
 
+The published `0.1.0` package was also installed from the public npm registry into a fresh warehouse-fulfillment repository. Its generated Compose environment extracted `4` symbols and `3` call edges. Two worktrees edited only `src/routing.ts` and `src/fulfillment.ts`; Git merged them without a structural conflict, while Conflict Radar reported `buildPickRoute -> planFulfillment` as `verified-breaking`. The merged TypeScript build then confirmed the stale two-argument call against the new three-argument signature.
+
 Run that admission race after creating the sibling stress repositories with:
 
 ```bash
@@ -102,6 +141,7 @@ npm run stress:os-automations
 
 - [Landing page](https://conflict-radius.vercel.app/)
 - [Documentation](https://conflict-radius.vercel.app/docs.html)
+- [npm package](https://www.npmjs.com/package/conflict-radar-mcp)
 - [GitHub repository](https://github.com/Ansell-OK/conflict-radius)
 
 ## Scope
@@ -110,4 +150,4 @@ The extractor uses a tree-sitter driver with JavaScript, TypeScript, and TSX que
 
 ## License
 
-Private project repository. Licensing has not yet been selected.
+The package is published as `UNLICENSED`; an open-source license has not yet been selected.

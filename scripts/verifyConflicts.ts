@@ -1,9 +1,12 @@
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 import { ConflictRadar } from "../src/conflictRadar.js";
 import { HydraClient, hydraConfigFromEnv } from "../src/hydra/client.js";
 
+const repositoryKey = "github.com/ansell-ok/conflict-radius";
+execFileSync(process.execPath, ["dist/extractor/extractSymbols.js", path.resolve("demo-repo"), "--repository-key", repositoryKey], { stdio: "inherit" });
 const client = new HydraClient(hydraConfigFromEnv());
 const radar = new ConflictRadar(client);
-const repositoryKey = "github.com/ansell-ok/conflict-radius";
 
 await radar.releaseTask("checkpoint-agent-a");
 await radar.releaseTask("checkpoint-agent-b");
