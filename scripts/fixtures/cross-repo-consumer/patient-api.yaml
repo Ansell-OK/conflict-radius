@@ -1,0 +1,27 @@
+openapi: 3.0.3
+info:
+  title: Patient API
+  version: 1.0.0
+paths:
+  /patients/{patientId}:
+    get:
+      operationId: getPatient
+      parameters:
+        - in: path
+          name: patientId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Patient record
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [patientId, status]
+                properties:
+                  patientId:
+                    type: string
+                  status:
+                    type: string

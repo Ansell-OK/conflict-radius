@@ -18,7 +18,8 @@ function changedSignature(parameters: string): string {
 `;
 }
 
-execFileSync(process.execPath, ["dist/extractor/extractSymbols.js", fixtureRoot], { cwd: process.cwd(), stdio: "inherit" });
+const repositoryKey = "fixtures/verification-repo";
+execFileSync(process.execPath, ["dist/extractor/extractSymbols.js", fixtureRoot, "--repository-key", repositoryKey], { cwd: process.cwd(), stdio: "inherit" });
 const client = new HydraClient(hydraConfigFromEnv());
 const radar = new ConflictRadar(client);
 
@@ -30,8 +31,8 @@ async function release(): Promise<void> {
 async function runCase(label: string, source: string, expected: Conflict["severity"]): Promise<void> {
   await writeFile(repositoryFile, baseline, "utf8");
   await release();
-  await radar.claimTask({ agentId: "verification-callee", taskDescription: `${label} callee`, symbols: ["crReadClinicalRecord"] });
-  await radar.claimTask({ agentId: "verification-caller", taskDescription: `${label} caller`, symbols: ["crPrepareClinicalView"] });
+  await radar.claimTask({ agentId: "verification-callee", repositoryKey, taskDescription: `${label} callee`, symbols: ["crReadClinicalRecord"] });
+  await radar.claimTask({ agentId: "verification-caller", repositoryKey, taskDescription: `${label} caller`, symbols: ["crPrepareClinicalView"] });
 
   const snapshots = await client.query(
     "MATCH (s:Symbol {name: $name}) RETURN s.signature_snapshot AS snapshot",
@@ -60,6 +61,7 @@ async function runCiCase(label: string, source: string, expectedExit: number, ex
       env: {
         ...process.env,
         CONFLICT_RADAR_CHANGED_SYMBOLS: "crReadClinicalRecord",
+        CONFLICT_RADAR_REPOSITORY_KEY: repositoryKey,
         CONFLICT_RADAR_OPEN_PRS: "scripts/fixtures/verification-open-prs.json",
       },
     });
@@ -79,7 +81,7 @@ try {
   await runCase("breaking", changedSignature("patientId, actorId"), "verified-breaking");
   await release();
   await writeFile(repositoryFile, baseline, "utf8");
-  execFileSync(process.execPath, ["dist/extractor/extractSymbols.js", fixtureRoot], { cwd: process.cwd(), stdio: "inherit" });
+  execFileSync(process.execPath, ["dist/extractor/extractSymbols.js", fixtureRoot, "--repository-key", repositoryKey], { cwd: process.cwd(), stdio: "inherit" });
   await runCiCase("unchanged", baseline, 0, "reachable-unverified");
   await runCiCase("compatible", changedSignature("patientId, options = {}"), 0, "verified-compatible");
   await runCiCase("breaking", changedSignature("patientId, actorId"), 1, "verified-breaking");

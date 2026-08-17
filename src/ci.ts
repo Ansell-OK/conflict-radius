@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { ConflictRadar } from "./conflictRadar.js";
 import { HydraClient, hydraConfigFromEnv } from "./hydra/client.js";
+import { AdmissionResult, ChangeSetInput } from "./admission.js";
 
 interface OpenPr {
   id: string;
@@ -59,6 +60,23 @@ async function discoverOpenPrs(client: HydraClient): Promise<OpenPr[]> {
   return result;
 }
 
+async function requestAdmission(): Promise<AdmissionResult | null> {
+  const payloadPath = process.env.CONFLICT_RADAR_CHANGE_SET;
+  if (!payloadPath) return null;
+  const admissionUrl = process.env.CONFLICT_RADAR_ADMISSION_URL;
+  if (!admissionUrl) throw new Error("CONFLICT_RADAR_ADMISSION_URL is required when CONFLICT_RADAR_CHANGE_SET is configured");
+  const payload = JSON.parse(await readFile(payloadPath, "utf8")) as ChangeSetInput;
+  const response = await fetch(`${admissionUrl.replace(/\/$/, "")}/admit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json() as AdmissionResult & { error?: string };
+  if (response.status === 409) return result;
+  if (!response.ok) throw new Error(`Cross-repository admission failed (${response.status}): ${result.error ?? JSON.stringify(result)}`);
+  return result;
+}
+
 const base = process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : process.env.CONFLICT_RADAR_BASE ?? "main";
 const explicitSymbols = process.env.CONFLICT_RADAR_CHANGED_SYMBOLS?.split(",").map((symbol) => symbol.trim()).filter(Boolean);
 const client = new HydraClient(hydraConfigFromEnv());
@@ -73,15 +91,16 @@ if (currentSymbols.length === 0) {
   await client.close();
 } else {
   const radar = new ConflictRadar(client);
+  const repositoryKey = process.env.CONFLICT_RADAR_REPOSITORY_KEY;
   const currentId = `ci-current-${process.env.GITHUB_SHA ?? Date.now()}`;
   await radar.releaseTask(currentId);
-  await radar.claimTask({ agentId: currentId, taskDescription: "CI changed symbols", symbols: currentSymbols, captureSnapshot: false });
+  await radar.claimTask({ agentId: currentId, repositoryKey, taskDescription: "CI changed symbols", symbols: currentSymbols, captureSnapshot: false });
 
   const claimed: string[] = [];
   try {
     for (const pr of prs) {
       await radar.releaseTask(pr.id);
-      await radar.claimTask({ agentId: pr.id, taskDescription: pr.taskDescription, symbols: pr.symbols, captureSnapshot: false });
+      await radar.claimTask({ agentId: pr.id, repositoryKey, taskDescription: pr.taskDescription, symbols: pr.symbols, captureSnapshot: false });
       claimed.push(pr.id);
     }
     const result = await radar.checkConflicts(currentId, "strong");
@@ -91,8 +110,16 @@ if (currentSymbols.length === 0) {
       console.error(JSON.stringify(result, null, 2));
       process.exitCode = 1;
     } else {
-      console.log(`conflict-radar-ci: clear (${result.conflicts.length} advisory finding(s))`);
-      if (result.conflicts.length > 0) console.log(JSON.stringify(result, null, 2));
+      const admission = await requestAdmission();
+      if (admission?.status === "blocked") {
+        console.error("conflict-radar-ci: cross-repository admission blocked");
+        console.error(JSON.stringify(admission, null, 2));
+        process.exitCode = 1;
+      } else {
+        console.log(`conflict-radar-ci: clear (${result.conflicts.length} advisory finding(s))`);
+        if (admission) console.log(JSON.stringify({ admission }, null, 2));
+        if (result.conflicts.length > 0) console.log(JSON.stringify(result, null, 2));
+      }
     }
   } finally {
     await radar.releaseTask(currentId);

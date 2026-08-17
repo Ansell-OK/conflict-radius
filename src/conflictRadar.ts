@@ -3,10 +3,13 @@ import { HydraClient, ConsistencyMode } from "./hydra/client.js";
 import { stableId } from "./ids.js";
 import path from "node:path";
 import { callSiteFromFile, classifySignatureChange, parseSignature, serializeSignature, signatureFromFile, SignatureSnapshot } from "./signatures.js";
+import { classifyContractChange, readOpenApiMembers } from "./contracts/openapi.js";
 
 export interface ClaimInput {
   agentId: string;
   taskDescription: string;
+  repositoryKey?: string;
+  worktreePath?: string;
   symbols?: string[];
   files?: string[];
   captureSnapshot?: boolean;
@@ -19,6 +22,10 @@ export interface Conflict {
   theirTask: string;
   path: string[];
   explanation: string;
+  scope?: "same-repo" | "cross-repo";
+  conflictingRepository?: string;
+  contract?: string;
+  member?: string;
 }
 
 interface ActiveSymbol {
@@ -29,6 +36,7 @@ interface ActiveSymbol {
   signatureSnapshot: string | null;
   filePath: string;
   repoPath: string;
+  repositoryKey: string;
 }
 
 function numberValue(value: unknown, field: string): number {
@@ -62,24 +70,35 @@ export class ConflictRadar {
       { agentNodeId, claimNodeId },
     );
     await this.client.query(
-      "MATCH (c:Claim {id: $claimNodeId}) SET c.claimed_at = $now, c.active = true, c.task_description = $description",
-      { claimNodeId, now, description: input.taskDescription },
+      "MATCH (c:Claim {id: $claimNodeId}) SET c.claimed_at = $now, c.active = true, c.task_description = $description, c.worktree_path = $worktreePath",
+      { claimNodeId, now, description: input.taskDescription, worktreePath: input.worktreePath ?? "" },
     );
 
-    const resolved: Array<{ id: number; name: string; filePath: string; repoPath: string; signatureSnapshot: string | null }> = [];
+    const resolved: Array<{ id: number; name: string; filePath: string; repoPath: string; repositoryKey: string; signatureSnapshot: string | null }> = [];
     const unresolved: string[] = [];
     for (const symbolName of input.symbols ?? []) {
       const matches = await this.client.query(
-        "MATCH (s:Symbol {name: $name}) MATCH (s)-[:DEFINED_IN]->(f:File)-[:PART_OF]->(r:Repo) RETURN s.id AS id, s.name AS name, f.path AS filePath, r.path AS repoPath, s.signature_snapshot AS signatureSnapshot",
-        { name: symbolName },
+        input.repositoryKey
+          ? "MATCH (s:Symbol {name: $name, repository_key: $repositoryKey}) MATCH (s)-[:DEFINED_IN]->(f:File)-[:PART_OF]->(r:Repo) RETURN s.id AS id, s.name AS name, f.path AS filePath, r.path AS repoPath, r.repository_key AS repositoryKey, s.signature_snapshot AS signatureSnapshot"
+          : "MATCH (s:Symbol {name: $name}) MATCH (s)-[:DEFINED_IN]->(f:File)-[:PART_OF]->(r:Repo) RETURN s.id AS id, s.name AS name, f.path AS filePath, r.path AS repoPath, r.repository_key AS repositoryKey, s.signature_snapshot AS signatureSnapshot",
+        { name: symbolName, repositoryKey: input.repositoryKey },
       );
-      if (matches.length === 0) unresolved.push(symbolName);
-        else for (const match of matches) resolved.push({ id: numberValue(match.id, "symbol id"), name: stringValue(match.name, "symbol name"), filePath: stringValue(match.filePath, "file path"), repoPath: stringValue(match.repoPath, "repo path"), signatureSnapshot: typeof match.signatureSnapshot === "string" ? match.signatureSnapshot : null });
+      const keyed = matches.filter((match) => typeof match.repositoryKey === "string");
+      const candidates = input.repositoryKey || keyed.length === 0 ? matches : keyed;
+      const repositoryKeys = new Set(candidates.map((match) => typeof match.repositoryKey === "string" ? match.repositoryKey : `legacy:${String(match.repoPath)}`));
+      if (!input.repositoryKey && repositoryKeys.size > 1) {
+        throw new Error(`Symbol ${symbolName} exists in multiple repositories; claim_task requires repositoryKey`);
+      }
+      if (candidates.length === 0) unresolved.push(symbolName);
+        else for (const match of candidates) {
+          const repoPath = stringValue(match.repoPath, "repo path");
+          resolved.push({ id: numberValue(match.id, "symbol id"), name: stringValue(match.name, "symbol name"), filePath: stringValue(match.filePath, "file path"), repoPath, repositoryKey: typeof match.repositoryKey === "string" ? match.repositoryKey : `legacy:${repoPath}`, signatureSnapshot: typeof match.signatureSnapshot === "string" ? match.signatureSnapshot : null });
+        }
     }
 
     for (const symbol of resolved) {
       if (input.captureSnapshot !== false) {
-        const liveSignature = await signatureFromFile(path.join(symbol.repoPath, symbol.filePath), symbol.name);
+        const liveSignature = await signatureFromFile(path.join(input.worktreePath ?? symbol.repoPath, symbol.filePath), symbol.name);
         await this.client.query(
           "MATCH (s:Symbol {id: $symbolId}) SET s.signature_snapshot = $snapshot",
           { symbolId: symbol.id, snapshot: serializeSignature(liveSignature) },
@@ -98,7 +117,7 @@ export class ConflictRadar {
     const conflicts: Conflict[] = [];
 
     const activeRows = await this.client.query(
-      "MATCH (a:Agent)-[:HOLDS]->(c:Claim {active: true})-[:TOUCHES]->(s:Symbol)-[:DEFINED_IN]->(f:File)-[:PART_OF]->(r:Repo) RETURN a.agent_id AS agentId, c.task_description AS task, s.id AS symbolId, s.name AS symbolName, s.signature_snapshot AS signatureSnapshot, f.path AS filePath, r.path AS repoPath",
+      "MATCH (a:Agent)-[:HOLDS]->(c:Claim {active: true})-[:TOUCHES]->(s:Symbol)-[:DEFINED_IN]->(f:File)-[:PART_OF]->(r:Repo) RETURN a.agent_id AS agentId, c.task_description AS task, c.worktree_path AS worktreePath, s.id AS symbolId, s.name AS symbolName, s.signature_snapshot AS signatureSnapshot, f.path AS filePath, r.path AS repoPath, r.repository_key AS repositoryKey",
       {},
       mode,
     );
@@ -109,13 +128,19 @@ export class ConflictRadar {
       symbolName: stringValue(row.symbolName, "symbol name"),
       signatureSnapshot: typeof row.signatureSnapshot === "string" ? row.signatureSnapshot : null,
       filePath: stringValue(row.filePath, "file path"),
-      repoPath: stringValue(row.repoPath, "repo path"),
+      repoPath: typeof row.worktreePath === "string" && row.worktreePath ? row.worktreePath : stringValue(row.repoPath, "repo path"),
+      repositoryKey: typeof row.repositoryKey === "string" ? row.repositoryKey : `legacy:${String(row.repoPath)}`,
     }));
     const mine = active.filter((row) => row.agentId === agentId);
     const others = active.filter((row) => row.agentId !== agentId);
 
     for (const otherAgent of new Set(others.map((row) => row.agentId))) {
       const theirSymbols = others.filter((row) => row.agentId === otherAgent);
+      const crossesRepository = mine.some((mySymbol) => theirSymbols.some((theirSymbol) => mySymbol.repositoryKey !== theirSymbol.repositoryKey));
+      if (crossesRepository) {
+        conflicts.push(...await this.crossRepositoryConflicts(agentId, otherAgent, mode));
+        continue;
+      }
       const theirIds = new Set(theirSymbols.map((row) => row.symbolId));
       const shared = mine.find((row) => theirIds.has(row.symbolId));
       if (shared) {
@@ -127,6 +152,7 @@ export class ConflictRadar {
           theirTask: theirSymbols[0]?.task ?? "",
           path: [shared.symbolName],
           explanation: `Both agents currently claim ${shared.symbolName}. ${verification.explanation}`,
+          scope: "same-repo",
         });
         continue;
       }
@@ -170,10 +196,58 @@ export class ConflictRadar {
         theirTask: theirSymbols[0]?.task ?? "",
         path: displayPath,
         explanation: `${displayPath.join(" -> ")} is connected through the call graph within two hops. ${verification.explanation}`,
+        scope: "same-repo",
       });
     }
 
     return { conflicts, checkedAt: new Date().toISOString() };
+  }
+
+  private async crossRepositoryConflicts(agentId: string, otherAgent: string, mode: ConsistencyMode): Promise<Conflict[]> {
+    const forward = await this.client.query(
+      "MATCH (me:Agent {agent_id: $agentId})-[:HOLDS]->(mc:Claim {active: true})-[:TOUCHES]->(provider:Symbol)-[:PUBLISHES]->(member:ContractMember) MATCH (other:Agent {agent_id: $otherAgent})-[:HOLDS]->(oc:Claim {active: true})-[:TOUCHES]->(consumer:Symbol)-[use:CONSUMES]->(member) MATCH (provider)-[:DEFINED_IN]->(pf:File)-[:PART_OF]->(pr:Repo) MATCH (consumer)-[:DEFINED_IN]->(cf:File)-[:PART_OF]->(cr:Repo) MATCH (contract:Contract)-[:HAS_MEMBER]->(member) RETURN oc.task_description AS theirTask, provider.name AS providerSymbol, consumer.name AS consumerSymbol, cr.repository_key AS conflictingRepository, pr.path AS providerRepoPath, mc.worktree_path AS providerWorktreePath, contract.provider_document_path AS documentPath, contract.coordinate AS contractCoordinate, member.member_key AS memberKey, member.member_kind AS memberKind, use.expected_snapshot AS consumerSnapshot",
+      { agentId, otherAgent },
+      mode,
+    );
+    const inverse = await this.client.query(
+      "MATCH (me:Agent {agent_id: $agentId})-[:HOLDS]->(mc:Claim {active: true})-[:TOUCHES]->(consumer:Symbol)-[use:CONSUMES]->(member:ContractMember) MATCH (other:Agent {agent_id: $otherAgent})-[:HOLDS]->(oc:Claim {active: true})-[:TOUCHES]->(provider:Symbol)-[:PUBLISHES]->(member) MATCH (provider)-[:DEFINED_IN]->(pf:File)-[:PART_OF]->(pr:Repo) MATCH (consumer)-[:DEFINED_IN]->(cf:File)-[:PART_OF]->(cr:Repo) MATCH (contract:Contract)-[:HAS_MEMBER]->(member) RETURN oc.task_description AS theirTask, provider.name AS providerSymbol, consumer.name AS consumerSymbol, pr.repository_key AS conflictingRepository, pr.path AS providerRepoPath, oc.worktree_path AS providerWorktreePath, contract.provider_document_path AS documentPath, contract.coordinate AS contractCoordinate, member.member_key AS memberKey, member.member_kind AS memberKind, use.expected_snapshot AS consumerSnapshot",
+      { agentId, otherAgent },
+      mode,
+    );
+    const findings: Conflict[] = [];
+    for (const row of [...forward, ...inverse]) {
+      const memberKey = stringValue(row.memberKey, "contract member key");
+      const memberKind = stringValue(row.memberKind, "contract member kind") as "operation" | "schema";
+      const providerRoot = typeof row.providerWorktreePath === "string" && row.providerWorktreePath ? row.providerWorktreePath : stringValue(row.providerRepoPath, "provider repo path");
+      const members = await readOpenApiMembers(path.join(providerRoot, stringValue(row.documentPath, "provider document path")));
+      const live = members.members.find((member) => member.memberKey === memberKey)?.snapshot ?? null;
+      const expected = typeof row.consumerSnapshot === "string" ? row.consumerSnapshot : null;
+      const verdict = classifyContractChange(expected, live, memberKind);
+      const severity: Conflict["severity"] = verdict === "breaking"
+        ? "verified-breaking"
+        : verdict === "compatible"
+          ? "verified-compatible"
+          : "reachable-unverified";
+      const providerSymbol = stringValue(row.providerSymbol, "provider symbol");
+      const consumerSymbol = stringValue(row.consumerSymbol, "consumer symbol");
+      findings.push({
+        severity,
+        reachability: "indirect",
+        conflictingAgent: otherAgent,
+        theirTask: stringValue(row.theirTask, "task"),
+        path: [providerSymbol, memberKey, consumerSymbol],
+        explanation: verdict === "breaking"
+          ? `${memberKey} changed incompatibly with the consumer's pinned OpenAPI snapshot.`
+          : verdict === "compatible"
+            ? `${memberKey} changed compatibly with the consumer's pinned OpenAPI snapshot.`
+            : `${memberKey} is shared across repositories, but its live provider snapshot is unchanged or could not be verified.`,
+        scope: "cross-repo",
+        conflictingRepository: stringValue(row.conflictingRepository, "conflicting repository"),
+        contract: stringValue(row.contractCoordinate, "contract coordinate"),
+        member: memberKey,
+      });
+    }
+    return findings;
   }
 
   private async verifyCandidate(mine: ActiveSymbol[], theirs: ActiveSymbol[]): Promise<{ severity: Conflict["severity"]; explanation: string }> {

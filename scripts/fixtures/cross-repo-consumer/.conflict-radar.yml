@@ -1,0 +1,9 @@
+repository:
+  key: github.com/conflict-radar-fixtures/patient-web
+contracts:
+  - coordinate: openapi:fixtures/patient-records
+    role: consumer
+    document: patient-api.yaml
+    bindings:
+      - member: operation:getPatient
+        symbol: src/patientClient.ts::fetchPatient

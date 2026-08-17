@@ -3,3 +3,4 @@ dist/
 .hydradb-local/
 .worktrees/
 conflict-radar-docs/
+stress-repos/

@@ -2,16 +2,18 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import Parser from "tree-sitter";
 import JavaScript from "tree-sitter-javascript";
+import TypeScript from "tree-sitter-typescript";
 import { HydraClient, hydraConfigFromEnv } from "../src/hydra/client.js";
 import { stableId } from "../src/ids.js";
 import { serializeSignature, signatureFromSource } from "../src/signatures.js";
+import { repositoryKeyForRoot } from "../src/repository.js";
 
 interface SymbolRow {
   id: number;
   name: string;
   kind: "function";
   filePath: string;
-  language: "javascript";
+  language: "javascript" | "typescript";
   startIndex: number;
   endIndex: number;
   signatureSnapshot: string;
@@ -22,18 +24,43 @@ interface CallRow {
   calleeName: string;
 }
 
-async function walkJavaScriptFiles(root: string): Promise<string[]> {
+interface LanguageConfig {
+  language: Parameters<Parser["setLanguage"]>[0];
+  name: SymbolRow["language"];
+  queryPath: string;
+}
+
+function languageConfig(file: string): LanguageConfig | null {
+  const extension = path.extname(file);
+  if ([".js", ".mjs", ".cjs"].includes(extension)) {
+    return { language: JavaScript as never, name: "javascript", queryPath: "extractor/queries/javascript.scm" };
+  }
+  if (extension === ".ts") {
+    return { language: TypeScript.typescript as never, name: "typescript", queryPath: "extractor/queries/typescript.scm" };
+  }
+  if (extension === ".tsx") {
+    return { language: TypeScript.tsx as never, name: "typescript", queryPath: "extractor/queries/typescript.scm" };
+  }
+  return null;
+}
+
+async function walkSourceFiles(root: string): Promise<string[]> {
   const found: string[] = [];
   const ignoredDirectories = new Set([".git", ".hydradb-local", ".worktrees", "dist", "node_modules"]);
   for (const entry of await readdir(root, { withFileTypes: true })) {
     const absolute = path.join(root, entry.name);
-    if (entry.isDirectory() && !ignoredDirectories.has(entry.name)) found.push(...(await walkJavaScriptFiles(absolute)));
-    else if (entry.isFile() && [".js", ".mjs", ".cjs"].includes(path.extname(entry.name))) found.push(absolute);
+    if (entry.isDirectory() && !ignoredDirectories.has(entry.name)) found.push(...(await walkSourceFiles(absolute)));
+    else if (entry.isFile() && languageConfig(absolute)) found.push(absolute);
   }
   return found;
 }
 
-async function parseFile(parser: Parser, query: Parser.Query, repoRoot: string, file: string) {
+async function parseFile(repoRoot: string, repositoryKey: string, file: string) {
+  const config = languageConfig(file);
+  if (!config) throw new Error(`Unsupported source file: ${file}`);
+  const parser = new Parser();
+  parser.setLanguage(config.language);
+  const query = new Parser.Query(config.language, await readFile(path.resolve(config.queryPath), "utf8"));
   const source = await readFile(file, "utf8");
   const tree = parser.parse(source);
   const relative = path.relative(repoRoot, file).replaceAll(path.sep, "/");
@@ -45,14 +72,14 @@ async function parseFile(parser: Parser, query: Parser.Query, repoRoot: string, 
     const definitionName = match.captures.find((capture) => capture.name === "definition.name");
     if (definition && definitionName) {
       definitions.push({
-        id: stableId("Symbol", `${relative}::${definitionName.node.text}`),
+        id: stableId("Symbol", `${repositoryKey}:${relative}::${definitionName.node.text}`),
         name: definitionName.node.text,
         kind: "function",
         filePath: relative,
-        language: "javascript",
+        language: config.name,
         startIndex: definition.node.startIndex,
         endIndex: definition.node.endIndex,
-        signatureSnapshot: serializeSignature(signatureFromSource(source, definitionName.node.text)),
+        signatureSnapshot: serializeSignature(signatureFromSource(source, definitionName.node.text, config.name)),
       });
     }
 
@@ -73,29 +100,31 @@ async function parseFile(parser: Parser, query: Parser.Query, repoRoot: string, 
 }
 
 async function main(): Promise<void> {
-  const repoRoot = path.resolve(process.argv[2] ?? "demo-repo");
-  const parser = new Parser();
-  parser.setLanguage(JavaScript as never);
-  const queryPath = path.resolve("extractor/queries/javascript.scm");
-  const querySource = await readFile(queryPath, "utf8");
-  const query = new Parser.Query(JavaScript as never, querySource);
-  const files = await walkJavaScriptFiles(repoRoot);
-  const parsed = await Promise.all(files.map((file) => parseFile(parser, query, repoRoot, file)));
+  const args = process.argv.slice(2);
+  const repositoryKeyIndex = args.indexOf("--repository-key");
+  const explicitRepositoryKey = repositoryKeyIndex >= 0 ? args[repositoryKeyIndex + 1] : undefined;
+  const positional = repositoryKeyIndex >= 0
+    ? args.filter((_, index) => index !== repositoryKeyIndex && index !== repositoryKeyIndex + 1)
+    : args;
+  const repoRoot = path.resolve(positional[0] ?? "demo-repo");
+  const repositoryKey = await repositoryKeyForRoot(repoRoot, explicitRepositoryKey);
+  const files = await walkSourceFiles(repoRoot);
+  const parsed = await Promise.all(files.map((file) => parseFile(repoRoot, repositoryKey, file)));
   const symbols = parsed.flatMap((file) => file.definitions);
   const symbolsByName = new Map(symbols.map((symbol) => [symbol.name, symbol]));
   const client = new HydraClient(hydraConfigFromEnv());
-  const repoId = stableId("Repo", repoRoot);
+  const repoId = stableId("Repo", repositoryKey);
 
   await client.query(
-    "UNWIND $rows AS row MERGE (r {id: row.id}) SET r:Repo, r.name = row.name, r.path = row.path",
-    { rows: [{ id: repoId, name: path.basename(repoRoot), path: repoRoot }] },
+    "UNWIND $rows AS row MERGE (r {id: row.id}) SET r:Repo, r.name = row.name, r.path = row.localPath, r.local_path = row.localPath, r.repository_key = row.repositoryKey",
+    { rows: [{ id: repoId, name: path.basename(repoRoot), localPath: repoRoot, repositoryKey }] },
   );
 
   for (const file of parsed) {
-    const fileId = stableId("File", file.relative);
+    const fileId = stableId("File", `${repositoryKey}:${file.relative}`);
     await client.query(
-      "UNWIND $rows AS row MERGE (f {id: row.id}) SET f:File, f.path = row.path",
-      { rows: [{ id: fileId, path: file.relative }] },
+      "UNWIND $rows AS row MERGE (f {id: row.id}) SET f:File, f.path = row.path, f.repository_key = row.repositoryKey",
+      { rows: [{ id: fileId, path: file.relative, repositoryKey }] },
     );
     await client.query(
       "UNWIND $rows AS row MATCH (f:File {id: row.source}), (r:Repo {id: row.target}) MERGE (f)-[edge:PART_OF {id: row.edgeId}]->(r)",
@@ -104,10 +133,10 @@ async function main(): Promise<void> {
   }
 
   for (const symbol of symbols) {
-    const fileId = stableId("File", symbol.filePath);
+    const fileId = stableId("File", `${repositoryKey}:${symbol.filePath}`);
     await client.query(
-      "UNWIND $rows AS row MERGE (s {id: row.id}) SET s:Symbol, s.name = row.name, s.kind = row.kind, s.file_path = row.filePath, s.language = row.language, s.signature_snapshot = row.signatureSnapshot",
-      { rows: [{ id: symbol.id, name: symbol.name, kind: symbol.kind, filePath: symbol.filePath, language: symbol.language, signatureSnapshot: symbol.signatureSnapshot }] },
+      "UNWIND $rows AS row MERGE (s {id: row.id}) SET s:Symbol, s.name = row.name, s.kind = row.kind, s.file_path = row.filePath, s.language = row.language, s.signature_snapshot = row.signatureSnapshot, s.repository_key = row.repositoryKey",
+      { rows: [{ id: symbol.id, name: symbol.name, kind: symbol.kind, filePath: symbol.filePath, language: symbol.language, signatureSnapshot: symbol.signatureSnapshot, repositoryKey }] },
     );
     await client.query(
       "UNWIND $rows AS row MATCH (s:Symbol {id: row.source}), (f:File {id: row.target}) MERGE (s)-[edge:DEFINED_IN {id: row.edgeId}]->(f)",
@@ -126,7 +155,7 @@ async function main(): Promise<void> {
     callEdges += 1;
   }
 
-  console.log(JSON.stringify({ repo: repoRoot, files: files.length, symbols: symbols.length, callEdges }, null, 2));
+  console.log(JSON.stringify({ repo: repoRoot, repositoryKey, files: files.length, symbols: symbols.length, callEdges }, null, 2));
   await client.close();
 }
 

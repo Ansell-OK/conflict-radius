@@ -15,11 +15,11 @@ await client.callTool({ name: "release_task", arguments: { agentId: "mcp-agent-a
 await client.callTool({ name: "release_task", arguments: { agentId: "mcp-agent-b" } });
 const claimA = await client.callTool({
   name: "claim_task",
-  arguments: { agentId: "mcp-agent-a", taskDescription: "Change getUser signature", symbols: ["getUser"] },
+  arguments: { agentId: "mcp-agent-a", repositoryKey: "github.com/ansell-ok/conflict-radius", taskDescription: "Change getUser signature", symbols: ["getUser"] },
 });
 const claimB = await client.callTool({
   name: "claim_task",
-  arguments: { agentId: "mcp-agent-b", taskDescription: "Add order creation", symbols: ["createOrder"] },
+  arguments: { agentId: "mcp-agent-b", repositoryKey: "github.com/ansell-ok/conflict-radius", taskDescription: "Add order creation", symbols: ["createOrder"] },
 });
 console.log("CLAIM_A", JSON.stringify(claimA));
 console.log("CLAIM_B", JSON.stringify(claimB));

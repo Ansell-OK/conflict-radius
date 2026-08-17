@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import Parser from "tree-sitter";
 import JavaScript from "tree-sitter-javascript";
+import TypeScript from "tree-sitter-typescript";
 
 export interface SignatureParameter {
   name: string;
@@ -16,10 +17,21 @@ export interface SignatureSnapshot {
 
 export type SignatureVerdict = "breaking" | "compatible" | "ambiguous";
 
-function parser(): Parser {
+export type SourceLanguage = "javascript" | "typescript";
+
+function parser(language: SourceLanguage = "javascript", tsx = false): Parser {
   const instance = new Parser();
-  instance.setLanguage(JavaScript as never);
+  instance.setLanguage(language === "typescript"
+    ? (tsx ? TypeScript.tsx : TypeScript.typescript) as never
+    : JavaScript as never);
   return instance;
+}
+
+function languageForFile(filePath: string): { language: SourceLanguage; tsx: boolean } {
+  const extension = filePath.toLowerCase().split(".").pop();
+  return extension === "ts" || extension === "tsx"
+    ? { language: "typescript", tsx: extension === "tsx" }
+    : { language: "javascript", tsx: false };
 }
 
 function walk(node: Parser.SyntaxNode, visit: (node: Parser.SyntaxNode) => boolean): Parser.SyntaxNode | undefined {
@@ -34,6 +46,7 @@ function walk(node: Parser.SyntaxNode, visit: (node: Parser.SyntaxNode) => boole
 function definitionFor(root: Parser.SyntaxNode, symbolName: string): Parser.SyntaxNode | undefined {
   return walk(root, (node) => {
     if (node.type === "function_declaration") return node.childForFieldName("name")?.text === symbolName;
+    if (node.type === "method_definition") return node.childForFieldName("name")?.text === symbolName;
     if (node.type !== "variable_declarator") return false;
     const value = node.childForFieldName("value");
     return node.childForFieldName("name")?.text === symbolName
@@ -48,6 +61,17 @@ function functionNode(definition: Parser.SyntaxNode): Parser.SyntaxNode {
 }
 
 function parameterSnapshot(node: Parser.SyntaxNode): SignatureParameter {
+  if (node.type === "required_parameter" || node.type === "optional_parameter") {
+    const pattern = node.childForFieldName("pattern") ?? node.childForFieldName("name") ?? node.namedChildren[0];
+    const assignment = pattern?.type === "assignment_pattern" ? pattern : undefined;
+    const parameterName = assignment?.childForFieldName("left") ?? pattern;
+    const defaultValue = node.childForFieldName("value");
+    return {
+      name: parameterName?.text ?? node.text.split(/[?:]/, 1)[0] ?? node.text,
+      optional: node.type === "optional_parameter" || Boolean(assignment) || Boolean(defaultValue),
+      rest: pattern?.type === "rest_pattern" || node.text.trimStart().startsWith("..."),
+    };
+  }
   if (node.type === "assignment_pattern") {
     const left = node.childForFieldName("left") ?? node.namedChildren[0];
     return { name: left?.text ?? node.text.split("=")[0]?.trim() ?? node.text, optional: true, rest: false };
@@ -59,8 +83,8 @@ function parameterSnapshot(node: Parser.SyntaxNode): SignatureParameter {
   return { name: node.text.replace(/\?$/, ""), optional: node.text.endsWith("?"), rest: false };
 }
 
-export function signatureFromSource(source: string, symbolName: string): SignatureSnapshot | null {
-  const tree = parser().parse(source);
+export function signatureFromSource(source: string, symbolName: string, language: SourceLanguage = "javascript", tsx = false): SignatureSnapshot | null {
+  const tree = parser(language, tsx).parse(source);
   const definition = definitionFor(tree.rootNode, symbolName);
   if (!definition) return null;
   const callable = functionNode(definition);
@@ -70,7 +94,8 @@ export function signatureFromSource(source: string, symbolName: string): Signatu
 }
 
 export async function signatureFromFile(filePath: string, symbolName: string): Promise<SignatureSnapshot | null> {
-  return signatureFromSource(await readFile(filePath, "utf8"), symbolName);
+  const config = languageForFile(filePath);
+  return signatureFromSource(await readFile(filePath, "utf8"), symbolName, config.language, config.tsx);
 }
 
 export function serializeSignature(signature: SignatureSnapshot | null): string {
@@ -107,8 +132,8 @@ export function classifySignatureChange(before: SignatureSnapshot, after: Signat
   return changed ? "compatible" : "ambiguous";
 }
 
-export function callSiteFromSource(source: string, calleeName: string): string | null {
-  const tree = parser().parse(source);
+export function callSiteFromSource(source: string, calleeName: string, language: SourceLanguage = "javascript", tsx = false): string | null {
+  const tree = parser(language, tsx).parse(source);
   const call = walk(tree.rootNode, (node) => {
     if (node.type !== "call_expression") return false;
     const target = node.childForFieldName("function");
@@ -120,5 +145,6 @@ export function callSiteFromSource(source: string, calleeName: string): string |
 }
 
 export async function callSiteFromFile(filePath: string, calleeName: string): Promise<string | null> {
-  return callSiteFromSource(await readFile(filePath, "utf8"), calleeName);
+  const config = languageForFile(filePath);
+  return callSiteFromSource(await readFile(filePath, "utf8"), calleeName, config.language, config.tsx);
 }

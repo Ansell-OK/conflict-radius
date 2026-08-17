@@ -3,7 +3,7 @@
 
 (variable_declarator
   name: (identifier) @definition.name
-  value: [(arrow_function) (function_expression)] @definition) 
+  value: [(arrow_function) (function_expression)] @definition)
 
 (method_definition
   name: [(property_identifier) (private_property_identifier)] @definition.name) @definition

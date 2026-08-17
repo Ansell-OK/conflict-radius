@@ -3,12 +3,13 @@ import { HydraClient, hydraConfigFromEnv } from "../src/hydra/client.js";
 
 const client = new HydraClient(hydraConfigFromEnv());
 const radar = new ConflictRadar(client);
+const repositoryKey = "github.com/ansell-ok/conflict-radius";
 
 await radar.releaseTask("checkpoint-agent-a");
 await radar.releaseTask("checkpoint-agent-b");
 
-await radar.claimTask({ agentId: "checkpoint-agent-a", taskDescription: "Change getUser signature", symbols: ["getUser"] });
-await radar.claimTask({ agentId: "checkpoint-agent-b", taskDescription: "Submit an order", symbols: ["submitOrder"] });
+await radar.claimTask({ agentId: "checkpoint-agent-a", repositoryKey, taskDescription: "Change getUser signature", symbols: ["getUser"] });
+await radar.claimTask({ agentId: "checkpoint-agent-b", repositoryKey, taskDescription: "Submit an order", symbols: ["submitOrder"] });
 const collision = await radar.checkConflicts("checkpoint-agent-a", "strong");
 console.log("COLLISION", JSON.stringify(collision, null, 2));
 if (!collision.conflicts.some((conflict) => conflict.conflictingAgent === "checkpoint-agent-b")) {
@@ -19,7 +20,7 @@ if (!collision.conflicts.some((conflict) => conflict.path.join(" -> ") === "getU
 }
 
 await radar.releaseTask("checkpoint-agent-b");
-await radar.claimTask({ agentId: "checkpoint-agent-b", taskDescription: "Format an order", symbols: ["formatOrder"] });
+await radar.claimTask({ agentId: "checkpoint-agent-b", repositoryKey, taskDescription: "Format an order", symbols: ["formatOrder"] });
 const clear = await radar.checkConflicts("checkpoint-agent-a", "strong");
 console.log("CLEAR", JSON.stringify(clear, null, 2));
 if (clear.conflicts.some((conflict) => conflict.conflictingAgent === "checkpoint-agent-b")) {
